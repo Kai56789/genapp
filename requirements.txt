@@ -1,5 +1,4 @@
-google-genai
-pandas
-openpyxl
 streamlit
-numpy
+pillow
+google-generativeai
+gtts
