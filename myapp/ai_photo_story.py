@@ -1,171 +1,151 @@
 import streamlit as st
 from PIL import Image
 import os
-import tempfile
-import traceback
-from gtts import gTTS
 import google.generativeai as genai
 
-st.set_page_config(page_title="AIフォトストーリーブック", layout="wide")
-st.title("📘 AIフォトストーリーブック")
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-flash-lite-latest")
 
-# Gemini API Setup
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
-    st.error("🚨 GEMINI_API_KEY が設定されていません。環境変数を確認してください。")
-    st.stop()
+st.set_page_config(page_title="AIストーリーメーカー", layout="wide")
 
-try:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-flash-lite-latest")
-except Exception as e:
-    st.error("Gemini API の初期化に失敗しました。\n" + str(e))
-    st.stop()
-
-uploaded_images = st.file_uploader(
-    "画像を複数アップロードしてください",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True
+st.markdown(
+    """
+    <style>
+    .full-width-textarea .stTextArea textarea {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
 )
 
-if uploaded_images:
-    st.subheader("📎 アップロードされた画像")
-    for img in uploaded_images:
-        st.image(img, width=250)
+st.markdown(
+    """
+    <h1 style="text-align:center; color:#4B3F72; font-family:'Georgia';">
+        📘 AIストーリーメーカー 📘
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
 
-    if st.button("📝 画像の描写（キャプション）を生成"):
-        captions = []
-        st.info("画像キャプション生成中...")
-        for img in uploaded_images:
-            try:
-                with Image.open(img) as image:
-                    prompt = "この画像の内容を短い物語的描写のキャプションにしてください。50文字以内、日本語。"
-                    try:
-                        response = model.generate_content([prompt, image])
-                        captions.append(response.text)
-                    except Exception as e:
-                        st.error(f"画像のキャプション生成に失敗しました: {e}")
-                        captions.append("(生成エラー)")
-            except Exception as img_e:
-                st.error(f"画像の読み込みに失敗しました: {img_e}")
-                captions.append("(読み込みエラー)")
-        st.session_state["captions"] = captions
-        st.success("キャプション生成完了！")
-        for i, cap in enumerate(captions):
-            st.write(f"**画像 {i+1}:** {cap}")
+st.info(
+    "画像をアップロードすると物語を作成できます。\n\n"
+    "違う画像でストーリーを作成したい場合は、再度アップロードしてください。"
+)
 
-    if "captions" in st.session_state and st.button("📖 物語を生成"):
-        with st.spinner("物語生成中..."):
-            prompt = f"""
-次の画像キャプションの順番に沿って短いストーリーを作成してください。
-章立て（第1章, 第2章…）で、児童書の語り口、日本語、400〜900文字。
+if "uploaded_image" not in st.session_state:
+    st.session_state["uploaded_image"] = None
 
-キャプション:
-{chr(10).join(st.session_state['captions'])}
-"""
-            try:
-                response = model.generate_content(prompt)
-                story = response.text
-            except Exception as e:
-                st.error("物語生成に失敗しました: " + str(e))
-                story = ""
+uploaded_image = st.file_uploader(
+    "🏞️ 画像をアップロードしてください",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=False
+)
 
-        st.session_state["story"] = story
+if uploaded_image:
+    img = Image.open(uploaded_image)
+    st.session_state["uploaded_image"] = img
 
-        if story:
-            st.success("物語生成完了！")
+if st.session_state["uploaded_image"]:
+    img = st.session_state["uploaded_image"]
 
-            # 章立て分割表示
-            chapters = story.split("第")
-            for chap in chapters:
-                chap = chap.strip()
-                if chap:
-                    chap_title = "第" + chap[:3]
-                    chap_content = chap[3:].strip()
-                    with st.expander(chap_title):
-                        st.write(chap_content)
-        else:
-            st.warning("物語は生成されませんでした。ログを確認してください。")
-
-    if "story" in st.session_state and st.button("🔊 ナレーション音声を生成"):
-        if not st.session_state["story"]:
-            st.warning("音声化するストーリーが空です。まず物語を生成してください。")
-        else:
-            with st.spinner("gTTS で音声生成中..."):
-                try:
-                    tts = gTTS(st.session_state["story"], lang="ja")
-                    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                        tmp_path = tmp.name
-                    tts.save(tmp_path)
-                    with open(tmp_path, "rb") as f:
-                        audio_bytes = f.read()
-                    st.session_state["audio_bytes"] = audio_bytes
-                except Exception as e:
-                    st.error("音声生成に失敗しました: " + str(e))
-                    st.error(traceback.format_exc())
-                    audio_bytes = None
-                    tmp_path = None
-                finally:
-                    try:
-                        if 'tmp_path' in locals() and tmp_path and os.path.exists(tmp_path):
-                            os.remove(tmp_path)
-                    except Exception:
-                        pass
-
-            if audio_bytes:
-                st.success("音声生成完了！下で再生できます👇")
-                st.audio(audio_bytes, format="audio/mp3")
-                st.download_button(
-                    label="📥 音声をダウンロード",
-                    data=audio_bytes,
-                    file_name="story.mp3",
-                    mime="audio/mp3"
-                )
-
-# ==== サイドバー：ストーリーの保存・閲覧機能 ====
-
-# saved_stories はタイトル→内容の辞書で管理
-if "saved_stories" not in st.session_state:
-    st.session_state["saved_stories"] = {}
-
-sidebar = st.sidebar
-sidebar.title("📚 ストーリー管理")
-
-if "story" in st.session_state and st.session_state["story"]:
-    # タイトル抽出：「第1章 ○○○」から章タイトル部分だけ抜き出し
-    first_chapter_title = None
-    for line in st.session_state["story"].splitlines():
-        if line.startswith("第1章"):
-            first_chapter_title = line.replace("第1章", "").strip()
-            break
-    if not first_chapter_title:
-        first_chapter_title = "無題ストーリー"
-
-    # ストーリー保存ボタン
-    if sidebar.button("💾 今のストーリーを保存"):
-        # 保存（上書き含む）
-        st.session_state["saved_stories"][first_chapter_title] = st.session_state["story"]
-        sidebar.success(f"『{first_chapter_title}』を保存しました。")
-
-# 保存済みタイトルリスト
-saved_titles = list(st.session_state["saved_stories"].keys())
-
-if saved_titles:
-    selected_title = sidebar.selectbox("保存済みストーリー一覧", saved_titles)
-
-    if selected_title:
-        sidebar.markdown(f"### 『{selected_title}』")
-        story_text = st.session_state["saved_stories"][selected_title]
-
-        # ストーリー全文表示（スクロール可）
-        sidebar.text_area("ストーリー全文", story_text, height=300, key="saved_story_text")
-
-        # ダウンロードボタン
-        sidebar.download_button(
-            label="📥 ストーリーをテキストでダウンロード",
-            data=story_text,
-            file_name=f"{selected_title}.txt",
-            mime="text/plain"
-        )
+    st.markdown(
+        "<h3 style='text-align:center; font-family:Georgia;'>アップロードされた画像</h3>",
+        unsafe_allow_html=True
+    )
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image(img, width=600)
 else:
-    sidebar.info("保存されたストーリーはまだありません。")
+    st.stop()
+
+story_style = st.selectbox(
+    "物語の雰囲気を選んでください 🔽",
+    [
+        "小説風（デフォルト）",
+        "優しい絵本風",
+        "ダーク・ミステリー風",
+        "冒険物語",
+        "ロマンチック",
+        "コメディ調",
+        "ポエム（詩的）"
+    ]
+)
+
+style_prompts = {
+    "小説風（デフォルト）": "情緒的で文学的。一人称または三人称の自然な語り口。",
+    "優しい絵本風": "幼い読者にも優しく語りかける、温かく柔らかい文体。",
+    "ダーク・ミステリー風": "不穏で謎めいた雰囲気。少し影のある語り口。",
+    "冒険物語": "ワクワクする展開、主人公の行動や発見を中心に。",
+    "ロマンチック": "美しい情景と心情描写。柔らかいロマンチックな文体。",
+    "コメディ調": "ユーモアを交えた明るく楽しい語り口。",
+    "ポエム（詩的）": "詩のようなリズムと比喩を多用した芸術的表現。"
+}
+
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    if st.button("📝 画像の描写（キャプション）を生成", use_container_width=True):
+        with st.spinner("画像から情景描写を生成しています..."):
+            prompt = "この画像を文学的に表現した情景描写を40〜60文字で作ってください。日本語。"
+            response = model.generate_content([prompt, img])
+            st.session_state["caption"] = response.text
+        st.success("キャプション生成完了！")
+
+    if "caption" in st.session_state:
+        st.markdown(
+            f"<div style='padding:15px; background:#faf5e6; border-radius:12px; font-size:16px;'>{st.session_state['caption']}</div>",
+            unsafe_allow_html=True
+        )
+
+if "caption" in st.session_state:
+    col1, col2, col3 = st.columns([0.2, 3, 0.2])
+    with col2:
+        if st.button("📖 ストーリーを生成", use_container_width=True):
+            with st.spinner("ストーリーを生成しています..."):
+                selected_style = style_prompts[story_style]
+                prompt = f"""
+以下の情景描写から物語を生成してください。
+
+● 文体の雰囲気：
+{selected_style}
+
+● 文字数：
+500〜900文字
+
+● 情景描写：
+{st.session_state['caption']}
+"""
+                response = model.generate_content(prompt)
+                st.session_state["story"] = response.text
+            st.success("ストーリーが完成しました！")
+
+        if "story" in st.session_state:
+            st.markdown('<div class="full-width-textarea">', unsafe_allow_html=True)
+            st.text_area(
+                "📖 生成されたストーリー",
+                st.session_state["story"],
+                height=500,
+                key="story_box"
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+if "story" in st.session_state:
+    bgm_files = {
+        "小説風（デフォルト）": "bgm/gentle.mp3",
+        "優しい絵本風": "bgm/gentle.mp3",
+        "ダーク・ミステリー風": "bgm/mystery.mp3",
+        "冒険物語": "bgm/adventure.mp3",
+        "ロマンチック": "bgm/romantic.mp3",
+        "コメディ調": "bgm/funny.mp3",
+        "ポエム（詩的）": "bgm/poem.mp3"
+    }
+
+    col1, col2, col3 = st.columns([0.2, 3, 0.2])
+    with col2:
+        st.markdown("### 🎧 物語の雰囲気に合わせたBGM")
+        bgm_path = bgm_files.get(story_style)
+        if bgm_path and os.path.exists(bgm_path):
+            st.audio(bgm_path)
+        else:
+            st.info("現在、BGMファイルは利用できません。")
