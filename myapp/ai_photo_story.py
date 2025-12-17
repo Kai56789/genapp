@@ -1,6 +1,7 @@
 import streamlit as st
 from PIL import Image
 import os
+import re
 import google.generativeai as genai
 
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -8,60 +9,56 @@ model = genai.GenerativeModel("gemini-flash-lite-latest")
 
 st.set_page_config(page_title="AIストーリーメーカー", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    .full-width-textarea .stTextArea textarea {
-        width: 100% !important;
-        max-width: 100% !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    """
-    <h1 style="text-align:center; color:#4B3F72; font-family:'Georgia';">
-        📘 AIストーリーメーカー 📘
-    </h1>
-    """,
-    unsafe_allow_html=True
-)
-
-st.info(
-    "画像をアップロードすると物語を作成できます。\n\n"
-    "違う画像でストーリーを作成したい場合は、再度アップロードしてください。"
-)
-
 if "uploaded_image" not in st.session_state:
     st.session_state["uploaded_image"] = None
+if "caption" not in st.session_state:
+    st.session_state["caption"] = ""
+if "story" not in st.session_state:
+    st.session_state["story"] = ""
+if "story_title" not in st.session_state:
+    st.session_state["story_title"] = ""
+if "stories" not in st.session_state:
+    st.session_state["stories"] = []
+if "saved_flag" not in st.session_state:
+    st.session_state["saved_flag"] = False
+if "selected_story" not in st.session_state:
+    st.session_state["selected_story"] = None
+if "selected_story_title" not in st.session_state:
+    st.session_state["selected_story_title"] = ""
 
-uploaded_image = st.file_uploader(
-    "🏞️ 画像をアップロードしてください",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=False
-)
+st.sidebar.title("📚 保存されたストーリー")
 
-if uploaded_image:
-    img = Image.open(uploaded_image)
-    st.session_state["uploaded_image"] = img
+titles = [s["title"] for s in st.session_state["stories"]]
 
-if st.session_state["uploaded_image"]:
-    img = st.session_state["uploaded_image"]
-
-    st.markdown(
-        "<h3 style='text-align:center; font-family:Georgia;'>アップロードされた画像</h3>",
-        unsafe_allow_html=True
-    )
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.image(img, width=600)
+selected_title = None
+if titles:
+    selected_title = st.sidebar.selectbox("ストーリーを選択", titles)
+    if st.sidebar.button("📖 表示"):
+        for s in st.session_state["stories"]:
+            if s["title"] == selected_title:
+                st.session_state["selected_story"] = s["story"]
+                st.session_state["selected_story_title"] = s["title"]
+                break
 else:
+    st.sidebar.info("まだストーリーはありません")
+
+st.title("📘 AIストーリーメーカー")
+
+uploaded_file = st.file_uploader(
+    "🏞️ 画像をアップロードしてください",
+    type=["jpg", "jpeg", "png"]
+)
+if uploaded_file:
+    st.session_state["uploaded_image"] = Image.open(uploaded_file)
+
+if not st.session_state["uploaded_image"]:
     st.stop()
 
+st.subheader("📷 アップロードされた画像")
+st.image(st.session_state["uploaded_image"], width=600)
+
 story_style = st.selectbox(
-    "物語の雰囲気を選んでください 🔽",
+    "物語の雰囲気を選んでください",
     [
         "小説風（デフォルト）",
         "優しい絵本風",
@@ -74,78 +71,92 @@ story_style = st.selectbox(
 )
 
 style_prompts = {
-    "小説風（デフォルト）": "情緒的で文学的。一人称または三人称の自然な語り口。",
-    "優しい絵本風": "幼い読者にも優しく語りかける、温かく柔らかい文体。",
-    "ダーク・ミステリー風": "不穏で謎めいた雰囲気。少し影のある語り口。",
-    "冒険物語": "ワクワクする展開、主人公の行動や発見を中心に。",
-    "ロマンチック": "美しい情景と心情描写。柔らかいロマンチックな文体。",
-    "コメディ調": "ユーモアを交えた明るく楽しい語り口。",
-    "ポエム（詩的）": "詩のようなリズムと比喩を多用した芸術的表現。"
+    "小説風（デフォルト）": "情緒的で文学的な文体。",
+    "優しい絵本風": "子供にも優しい語り口。",
+    "ダーク・ミステリー風": "不穏で謎めいた雰囲気。",
+    "冒険物語": "躍動感ある冒険譚。",
+    "ロマンチック": "美しくロマンチックな表現。",
+    "コメディ調": "明るくユーモラス。",
+    "ポエム（詩的）": "詩的で比喩的。"
 }
 
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    if st.button("📝 画像の描写（キャプション）を生成", use_container_width=True):
-        with st.spinner("画像から情景描写を生成しています..."):
-            prompt = "この画像を文学的に表現した情景描写を40〜60文字で作ってください。日本語。"
-            response = model.generate_content([prompt, img])
-            st.session_state["caption"] = response.text
-        st.success("キャプション生成完了！")
+if st.button("📝 画像の描写を生成"):
+    with st.spinner("情景描写を生成中..."):
+        prompt = "この画像を文学的に40〜60文字で描写してください。日本語。"
+        response = model.generate_content([prompt, st.session_state["uploaded_image"]])
+        st.session_state["caption"] = response.text
 
-    if "caption" in st.session_state:
-        st.markdown(
-            f"<div style='padding:15px; background:#faf5e6; border-radius:12px; font-size:16px;'>{st.session_state['caption']}</div>",
-            unsafe_allow_html=True
-        )
+if st.session_state["caption"]:
+    st.markdown("### 情景描写")
+    st.write(st.session_state["caption"])
 
-if "caption" in st.session_state:
-    col1, col2, col3 = st.columns([0.2, 3, 0.2])
-    with col2:
-        if st.button("📖 ストーリーを生成", use_container_width=True):
-            with st.spinner("ストーリーを生成しています..."):
-                selected_style = style_prompts[story_style]
-                prompt = f"""
-以下の情景描写から物語を生成してください。
+if st.session_state["caption"]:
+    if st.button("📖 ストーリー＆タイトルを生成"):
+        with st.spinner("ストーリー生成中..."):
+            story_prompt = f"""
+以下の情景描写から物語を作成してください。
 
-● 文体の雰囲気：
-{selected_style}
+文体：
+{style_prompts[story_style]}
 
-● 文字数：
+文字数：
 500〜900文字
 
-● 情景描写：
-{st.session_state['caption']}
+情景描写：
+{st.session_state["caption"]}
 """
-                response = model.generate_content(prompt)
-                st.session_state["story"] = response.text
-            st.success("ストーリーが完成しました！")
+            story_response = model.generate_content(story_prompt)
+            story_text = story_response.text.strip()
+            st.session_state["story"] = story_text
+            st.session_state["saved_flag"] = False
 
-        if "story" in st.session_state:
-            st.markdown('<div class="full-width-textarea">', unsafe_allow_html=True)
-            st.text_area(
-                "📖 生成されたストーリー",
-                st.session_state["story"],
-                height=500,
-                key="story_box"
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
+        with st.spinner("タイトル生成中..."):
+            title_prompt = f"""
+以下の物語に合うタイトルを日本語で20文字以内で1つだけ短く付けてください。  
+複数候補や説明は不要です。
 
-if "story" in st.session_state:
-    bgm_files = {
-        "小説風（デフォルト）": "bgm/gentle.mp3",
-        "優しい絵本風": "bgm/gentle.mp3",
-        "ダーク・ミステリー風": "bgm/mystery.mp3",
-        "冒険物語": "bgm/adventure.mp3",
-        "ロマンチック": "bgm/romantic.mp3",
-        "コメディ調": "bgm/funny.mp3",
-        "ポエム（詩的）": "bgm/poem.mp3"
-    }
+物語：
+{story_text}
+"""
+            title_response = model.generate_content(title_prompt)
+            title_raw = title_response.text.strip()
 
-    col1, col2, col3 = st.columns([0.2, 3, 0.2])
-    with col2:
-        st.markdown("### 🎧 物語の雰囲気に合わせたBGM")
-        bgm_path = bgm_files.get(story_style)
-        if bgm_path and os.path.exists(bgm_path):
-            st.audio(bgm_path)
-        else:
-            st.info("現在、BGMファイルは利用できません。")
+            title_line = title_raw.split("\n")[0].strip()
+            title_clean = re.sub(r"^\d+\.?\s*", "", title_line)
+            title_final = title_clean[:20]
+
+            st.session_state["story_title"] = title_final
+
+if st.session_state["story"]:
+    st.markdown(f"### タイトル: **{st.session_state['story_title']}**")
+    st.text_area(
+        "📖 生成されたストーリー",
+        st.session_state["story"],
+        height=500
+    )
+
+    if not st.session_state["saved_flag"]:
+        save_clicked = st.button("📥 2回押すと保存がされます")
+        if save_clicked:
+            titles = [s["title"] for s in st.session_state["stories"]]
+            if st.session_state["story_title"] in titles:
+                st.warning("同じタイトルのストーリーが既に保存されています。")
+            else:
+                st.session_state["stories"].append({
+                    "title": st.session_state["story_title"],
+                    "story": st.session_state["story"]
+                })
+                st.session_state["saved_flag"] = True
+                st.success("ストーリーを保存しました！")
+    else:
+        st.info("このストーリーはすでに保存されています。")
+
+if st.session_state["selected_story"]:
+    st.markdown("---")
+    st.markdown(f"## 📚 保存済みストーリー: **{st.session_state['selected_story_title']}**")
+    st.text_area(
+        "保存されたストーリー内容",
+        st.session_state["selected_story"],
+        height=400,
+        key="selected_story_area"
+    )
